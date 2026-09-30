@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     owner_id: int
     timezone: str = "Europe/Moscow"
     data_dir: Path = Path("data")
+    # Needed where Telegram is blocked/throttled
+    proxy_url: str | None = None
+    mtproxy: str | None = None
 
     @property
     def db_path(self) -> Path:

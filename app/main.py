@@ -2,11 +2,13 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
 from telethon import TelegramClient
 
 from app.bot import build_router
 from app.config import Settings
 from app.db import Database
+from app.proxy import telethon_proxy_kwargs
 from app.userbot import Monitor
 
 
@@ -18,8 +20,15 @@ async def main() -> None:
     db = Database(settings.db_path)
     await db.connect()
 
-    bot = Bot(settings.bot_token)
-    client = TelegramClient(str(settings.session_path), settings.api_id, settings.api_hash)
+    # Bot API goes over HTTPS; MTProxy is not supported there, only socks/http proxy_url
+    session = AiohttpSession(proxy=settings.proxy_url) if settings.proxy_url else None
+    bot = Bot(settings.bot_token, session=session)
+    client = TelegramClient(
+        str(settings.session_path),
+        settings.api_id,
+        settings.api_hash,
+        **telethon_proxy_kwargs(settings.proxy_url, settings.mtproxy),
+    )
     # First run asks for phone and login code in the console, then the session is saved.
     await client.start()
 
