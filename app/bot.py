@@ -1,3 +1,5 @@
+from html import escape
+
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message
@@ -31,8 +33,9 @@ def build_router(db: Database, monitor: Monitor, owner_id: int) -> Router:
         if not rows:
             await msg.answer("Список пуст. Добавьте группу: /add @username")
             return
-        lines = [f"• {title} — <code>{cid}</code>" for cid, title, _ in rows]
-        await msg.answer("\n".join(lines), parse_mode="HTML")
+        account = escape(await monitor.account_name())
+        lines = [f"• {escape(title)} — <code>{cid}</code>" for cid, title, _ in rows]
+        await msg.answer(f"Читает аккаунт: {account}\n\n" + "\n".join(lines), parse_mode="HTML")
 
     @router.message(Command("add"))
     async def add(msg: Message, command: CommandObject):
@@ -44,7 +47,8 @@ def build_router(db: Database, monitor: Monitor, owner_id: int) -> Router:
         except Exception as e:  # show any Telegram error to the owner as is
             await msg.answer(f"Не удалось добавить: {e}")
             return
-        await msg.answer(f"✅ Добавлено: {title}")
+        account = await monitor.account_name()
+        await msg.answer(f"✅ Добавлено: {title}\nЧитает аккаунт: {account}")
 
     @router.message(Command("remove"))
     async def remove(msg: Message, command: CommandObject):

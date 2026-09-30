@@ -1,11 +1,13 @@
+import asyncio
 import logging
 import re
 
 from aiogram import Bot
 from telethon import TelegramClient, events
-from telethon.tl.functions.channels import JoinChannelRequest
+from telethon.tl.functions.channels import GetParticipantRequest, JoinChannelRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
-from telethon.errors import UserAlreadyParticipantError
+from telethon.errors import InviteRequestSentError, UserAlreadyParticipantError, UserNotParticipantError
+from telethon.tl.types import Channel
 from telethon.utils import get_display_name
 
 from app.classifier import classify
@@ -13,6 +15,9 @@ from app.db import Database
 from app.notify import format_lead, lead_keyboard, message_link
 
 log = logging.getLogger(__name__)
+
+# Anti-spam bots in groups often kick newcomers who don't pass a captcha within seconds
+JOIN_CHECK_DELAY_SEC = 5
 
 INVITE_RE = re.compile(r"(?:t\.me/(?:\+|joinchat/))([\w-]+)")
 PUBLIC_RE = re.compile(r"(?:t\.me/|@)([A-Za-z]\w{3,})")
@@ -59,22 +64,48 @@ class Monitor:
     async def add_chat(self, ref: str) -> str:
         """Join a chat by @username / t.me link / invite link and start monitoring it."""
         ref = ref.strip()
-        if m := INVITE_RE.search(ref):
-            try:
-                updates = await self.client(ImportChatInviteRequest(m.group(1)))
-                entity = updates.chats[0]
-            except UserAlreadyParticipantError:
-                entity = await self.client.get_entity(ref)
-        elif m := PUBLIC_RE.search(ref):
-            entity = await self.client.get_entity(m.group(1))
-            await self.client(JoinChannelRequest(entity))
-        else:
-            raise ValueError("Не понял ссылку. Пример: @spb_samosval или https://t.me/+AbCd…")
-        chat_id = (await self.client.get_peer_id(entity))
+        try:
+            if m := INVITE_RE.search(ref):
+                try:
+                    updates = await self.client(ImportChatInviteRequest(m.group(1)))
+                    entity = updates.chats[0]
+                except UserAlreadyParticipantError:
+                    entity = await self.client.get_entity(ref)
+            elif m := PUBLIC_RE.search(ref):
+                entity = await self.client.get_entity(m.group(1))
+                await self.client(JoinChannelRequest(entity))
+            else:
+                raise ValueError("Не понял ссылку. Пример: @spb_samosval или https://t.me/+AbCd…")
+        except InviteRequestSentError:
+            raise ValueError(
+                "Группа принимает участников по заявке. Заявка отправлена — "
+                "после одобрения админом повторите /add."
+            )
+        await asyncio.sleep(JOIN_CHECK_DELAY_SEC)
+        if not await self.is_member(entity):
+            raise ValueError(
+                "Аккаунт вступил, но его сразу удалили из группы — скорее всего, там антиспам-бот "
+                "с капчей. Зайдите в группу с этого аккаунта вручную, пройдите проверку и повторите /add."
+            )
+        chat_id = await self.client.get_peer_id(entity)
         title = get_display_name(entity)
         await self.db.add_chat(chat_id, title, getattr(entity, "username", None))
         self.chat_ids.add(chat_id)
         return title
+
+    async def is_member(self, entity) -> bool:
+        if not isinstance(entity, Channel):
+            return True  # basic groups: joining via invite is enough
+        try:
+            await self.client(GetParticipantRequest(entity, "me"))
+            return True
+        except UserNotParticipantError:
+            return False
+
+    async def account_name(self) -> str:
+        me = await self.client.get_me()
+        name = get_display_name(me)
+        return f"{name} (@{me.username})" if me.username else f"{name} (+{me.phone})"
 
     async def remove_chat(self, chat_id: int) -> bool:
         self.chat_ids.discard(chat_id)
