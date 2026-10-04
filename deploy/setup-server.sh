@@ -6,7 +6,9 @@
 #   bash /root/setup-tg.sh
 #
 # Пользователь apps — общий не-root пользователь для своих проектов на сервере (нет — создаётся);
-# у этого проекта своя папка, служба tg-monitor, sudoers-файл и deploy key.
+# у этого проекта своя папка, служба tg-monitor и sudoers-файл. На GitHub сервер не ходит: deploy keys
+# в организации запрещены, а ключ аккаунта на сервере — доступ ко всем репозиториям. Обновления —
+# git push с машины разработчика прямо в копию на сервере (receive.denyCurrentBranch=updateInstead).
 # Повторный запуск безопасен. Старая копия /root/projects/telegram-groups-monitoring-avto не трогается.
 #
 # После скрипта один раз — вход аккаунта, который читает группы (спросит телефон и код из Telegram):
@@ -20,8 +22,6 @@ OLD=${OLD:-/root/projects/telegram-groups-monitoring-avto}
 DIR=$H/telegram-groups-monitoring-avto
 BRANCH=claude/brave-wright-nzny1k
 REPO_PATH=krv-free-lance/telegram-groups-monitoring-avto.git
-# deploy key привязан к одному репозиторию; у apps их несколько — нужный выбирается по Host в ~/.ssh/config
-GH_ALIAS=github-tgmon
 SVC=tg-monitor
 
 step() { echo; echo "== $*"; }
@@ -40,32 +40,16 @@ install -d -m 700 -o "$U" -g "$U" "$H/.ssh"
 # входить в apps можно теми же ключами, что и в root
 [ -f "$H/.ssh/authorized_keys" ] || install -m 600 -o "$U" -g "$U" /root/.ssh/authorized_keys "$H/.ssh/authorized_keys"
 
-step "1. Deploy key для этого репозитория"
-if [ ! -f "$H/.ssh/id_ed25519_tgmon" ]; then
-    as_u "ssh-keygen -q -t ed25519 -N '' -C '$U@$(hostname) tg-monitor' -f ~/.ssh/id_ed25519_tgmon"
-fi
-if ! grep -q "^Host $GH_ALIAS\$" "$H/.ssh/config" 2>/dev/null; then
-    cat >> "$H/.ssh/config" <<EOF
-
-# telegram-groups-monitoring-avto: свой deploy key (deploy/setup-server.sh)
-Host $GH_ALIAS
-    HostName github.com
-    User git
-    IdentityFile ~/.ssh/id_ed25519_tgmon
-    IdentitiesOnly yes
-EOF
-    chown "$U:$U" "$H/.ssh/config"; chmod 600 "$H/.ssh/config"
-fi
-as_u "ssh-keyscan -t ed25519 github.com 2>/dev/null >> ~/.ssh/known_hosts; sort -u -o ~/.ssh/known_hosts ~/.ssh/known_hosts"
-
-step "2. Код (клон ключом root, дальше — владелец $U, origin через свой ключ)"
+step "1. Код (первый клон — ключом root; дальше обновления пушем с машины разработчика)"
 if [ ! -d "$DIR/.git" ]; then
     git clone -q -b "$BRANCH" "git@github.com:$REPO_PATH" "$DIR"
-    git -C "$DIR" remote set-url origin "git@$GH_ALIAS:$REPO_PATH"
 fi
+git -C "$DIR" remote remove origin 2>/dev/null || true   # без ключа на сервере origin не работает
 chown -R "$U:$U" "$DIR"
+# push в текущую ветку обновляет рабочую копию, если в ней нет локальных правок
+as_u "git -C $DIR config receive.denyCurrentBranch updateInstead"
 
-step "3. Секреты и данные из старой копии"
+step "2. Секреты и данные из старой копии"
 if [ ! -f "$DIR/.env" ]; then
     install -m 600 -o "$U" -g "$U" "$OLD/.env" "$DIR/.env"
     echo ".env перенесён (600, только $U)"
@@ -76,14 +60,14 @@ if [ ! -d "$DIR/data" ]; then
     echo "data/ перенесён (база групп и заявок, сессия)"
 fi
 
-step "4. Окружение Python"
+step "3. Окружение Python"
 if [ ! -x "$DIR/.venv/bin/python" ]; then
     as_u "cd $DIR && python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt"
 else
     as_u "cd $DIR && .venv/bin/pip install -q -r requirements.txt"
 fi
 
-step "5. Служба $SVC"
+step "4. Служба $SVC"
 install -m 644 "$DIR/deploy/$SVC.service" "/etc/systemd/system/$SVC.service"
 install -m 644 "$DIR/deploy/$SVC-failed.service" "/etc/systemd/system/$SVC-failed.service"
 systemctl daemon-reload
@@ -95,7 +79,7 @@ EOF
 chmod 440 "/etc/sudoers.d/$U-$SVC"
 visudo -cf "/etc/sudoers.d/$U-$SVC" >/dev/null || { rm -f "/etc/sudoers.d/$U-$SVC"; echo "sudoers не прошёл проверку — удалён"; exit 1; }
 
-step "6. Сессия аккаунта-читателя"
+step "5. Сессия аккаунта-читателя"
 if as_u "cd $DIR && .venv/bin/python -c '
 import asyncio, sys
 from telethon import TelegramClient
@@ -121,14 +105,9 @@ else
     echo "   systemctl restart $SVC"
 fi
 
-step "7. GitHub"
-if as_u "ssh -o BatchMode=yes -T git@$GH_ALIAS" 2>&1 | grep -q "successfully authenticated"; then
-    echo "ключ работает: git pull в $DIR — через свой deploy key"
-else
-    echo "!! Добавьте ключ как deploy key (только чтение достаточно):"
-    echo "   github.com/${REPO_PATH%.git} → Settings → Deploy keys → Add deploy key"
-    echo
-    cat "$H/.ssh/id_ed25519_tgmon.pub"
-fi
+step "6. Обновления"
+echo "с машины разработчика:"
+echo "   git remote add server $U@$(hostname -I | awk '{print $1}'):telegram-groups-monitoring-avto   # один раз"
+echo "   git push server $BRANCH && ssh $U@$(hostname -I | awk '{print $1}') 'sudo systemctl restart $SVC'"
 echo
 echo "ГОТОВО. Состояние — /status в боте; журнал — journalctl -u $SVC -f"

@@ -42,6 +42,12 @@ https://freelance.ru/task/view/10539
    sudo -u apps -H bash -c 'cd ~/telegram-groups-monitoring-avto && .venv/bin/python -m app.login'
    systemctl restart tg-monitor
    ```
+   **Обновление кода** — пушем с машины разработчика прямо на сервер (deploy keys в организации запрещены,
+   а ключ аккаунта на сервере давал бы доступ ко всем репозиториям):
+   ```bash
+   git remote add server apps@<сервер>:telegram-groups-monitoring-avto   # один раз
+   git push server claude/brave-wright-nzny1k && ssh apps@<сервер> 'sudo systemctl restart tg-monitor'
+   ```
    Сервис сам никогда не спрашивает телефон: если сессия слетела, бот пишет владельцу и служба
    останавливается (код 2, без перезапусков) — нужен повторный `app.login`.
 4. Напишите боту `/start`, добавьте группы: `/add @username` или `/add https://t.me/+invite`.
