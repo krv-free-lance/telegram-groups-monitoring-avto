@@ -1,0 +1,11 @@
+# Сообщение владельцу через бота этого проекта, когда tg-monitor упал и перестал перезапускаться
+# (OnFailure в tg-monitor.service). Ставится deploy/setup-server.sh.
+[Unit]
+Description=Уведомление: tg-monitor упал
+
+[Service]
+Type=oneshot
+User=apps
+Group=apps
+WorkingDirectory=/home/apps/telegram-groups-monitoring-avto
+ExecStart=/home/apps/telegram-groups-monitoring-avto/.venv/bin/python -m app.alert "⛔ Мониторинг заявок упал и не поднялся после 5 перезапусков за 10 минут. На сервере: journalctl -u tg-monitor -n 50"

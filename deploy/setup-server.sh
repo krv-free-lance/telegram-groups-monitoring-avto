@@ -5,8 +5,8 @@
 #   git show origin/claude/brave-wright-nzny1k:deploy/setup-server.sh > /root/setup-tg.sh
 #   bash /root/setup-tg.sh
 #
-# Пользователь apps — общий для своих проектов на сервере (ставит deploy/setup-apps.sh проекта
-# bcs-trading-bot); у этого проекта своя папка, служба tg-monitor, sudoers-файл и deploy key.
+# Пользователь apps — общий не-root пользователь для своих проектов на сервере (нет — создаётся);
+# у этого проекта своя папка, служба tg-monitor, sudoers-файл и deploy key.
 # Повторный запуск безопасен. Старая копия /root/projects/telegram-groups-monitoring-avto не трогается.
 #
 # После скрипта один раз — вход аккаунта, который читает группы (спросит телефон и код из Telegram):
@@ -28,8 +28,17 @@ step() { echo; echo "== $*"; }
 as_u() { sudo -u "$U" -H bash -lc "$1"; }
 
 [ "$(id -u)" = 0 ] || { echo "запускать от root"; exit 1; }
-id "$U" >/dev/null 2>&1 || { echo "нет пользователя $U: сначала deploy/setup-apps.sh проекта bcs-trading-bot"; exit 1; }
 for c in git python3 rsync; do command -v $c >/dev/null || { echo "нет $c"; exit 1; }; done
+
+step "0. Пользователь $U"
+if ! id "$U" >/dev/null 2>&1; then
+    adduser --disabled-password --gecos "" "$U"
+    passwd -l "$U" >/dev/null
+fi
+usermod -aG systemd-journal "$U"   # journalctl -u tg-monitor без sudo
+install -d -m 700 -o "$U" -g "$U" "$H/.ssh"
+# входить в apps можно теми же ключами, что и в root
+[ -f "$H/.ssh/authorized_keys" ] || install -m 600 -o "$U" -g "$U" /root/.ssh/authorized_keys "$H/.ssh/authorized_keys"
 
 step "1. Deploy key для этого репозитория"
 if [ ! -f "$H/.ssh/id_ed25519_tgmon" ]; then
@@ -76,6 +85,7 @@ fi
 
 step "5. Служба $SVC"
 install -m 644 "$DIR/deploy/$SVC.service" "/etc/systemd/system/$SVC.service"
+install -m 644 "$DIR/deploy/$SVC-failed.service" "/etc/systemd/system/$SVC-failed.service"
 systemctl daemon-reload
 systemctl enable "$SVC" >/dev/null
 cat > "/etc/sudoers.d/$U-$SVC" <<EOF
