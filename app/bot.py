@@ -13,6 +13,7 @@ HELP = (
     "/chats — отслеживаемые группы\n"
     "/add &lt;ссылка или @username&gt; — добавить группу\n"
     "/remove &lt;id&gt; — убрать группу\n"
+    "/status — работает ли мониторинг\n"
     "/stats — статистика заявок\n"
     "/pause, /resume — приостановить/возобновить"
 )
@@ -59,6 +60,10 @@ def build_router(db: Database, monitor: Monitor, owner_id: int) -> Router:
             return
         ok = await monitor.remove_chat(chat_id)
         await msg.answer("🗑 Удалено" if ok else "Такой группы нет в списке")
+
+    @router.message(Command("status"))
+    async def status(msg: Message):
+        await msg.answer(await monitor.status_text(), parse_mode="HTML")
 
     @router.message(Command("stats"))
     async def stats(msg: Message):

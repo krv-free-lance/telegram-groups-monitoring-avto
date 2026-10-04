@@ -35,14 +35,22 @@ https://freelance.ru/task/view/10539
    python -m app.main
    ```
    При первом запуске Telethon спросит номер телефона и код входа — сессия сохранится в `data/`.
-3. На сервере (Docker):
+3. На сервере — служба systemd под общим пользователем `apps` (не root): `deploy/setup-server.sh`
+   (запуск от root, повторный безопасен; что делает — в шапке скрипта). Затем один раз вход аккаунта,
+   который читает группы:
    ```bash
-   docker compose run --rm bot   # первый раз: ввести телефон и код, затем Ctrl+C
-   docker compose up -d
+   sudo -u apps -H bash -c 'cd ~/telegram-groups-monitoring-avto && .venv/bin/python -m app.login'
+   systemctl restart tg-monitor
    ```
+   Сервис сам никогда не спрашивает телефон: если сессия слетела, бот пишет владельцу и служба
+   останавливается (код 2, без перезапусков) — нужен повторный `app.login`.
 4. Напишите боту `/start`, добавьте группы: `/add @username` или `/add https://t.me/+invite`.
 
-Команды: `/chats`, `/add`, `/remove <id>`, `/stats`, `/pause`, `/resume`.
+Команды: `/status`, `/chats`, `/add`, `/remove <id>`, `/stats`, `/pause`, `/resume`.
+
+**Работает ли?** При каждом запуске бот пишет «✅ Мониторинг запущен». `/status` — аккаунт, число групп,
+время запуска, когда последний раз приходило сообщение из Telegram, число заявок. Журнал службы:
+`journalctl -u tg-monitor -f`.
 
 ## Тесты
 

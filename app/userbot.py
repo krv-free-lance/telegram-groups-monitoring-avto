@@ -1,6 +1,10 @@
 import asyncio
 import logging
 import re
+import time
+from datetime import datetime
+from html import escape
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 from telethon import TelegramClient, events
@@ -34,6 +38,9 @@ class Monitor:
         self.tz = tz
         self.chat_ids: set[int] = set()
         self.paused = False
+        self.started_at = time.time()
+        # Any update from Telegram, monitored chat or not: proves the user session is alive
+        self.last_event_at: float | None = None
 
     async def start(self) -> None:
         self.chat_ids = await self.db.chat_ids()
@@ -41,6 +48,7 @@ class Monitor:
         log.info("Monitoring %d chats", len(self.chat_ids))
 
     async def on_message(self, event: events.NewMessage.Event) -> None:
+        self.last_event_at = time.time()
         if self.paused or event.chat_id not in self.chat_ids:
             return
         text = event.raw_text or ""
@@ -107,6 +115,37 @@ class Monitor:
         name = get_display_name(me)
         return f"{name} (@{me.username})" if me.username else f"{name} (+{me.phone})"
 
+    async def status_text(self, now: float | None = None) -> str:
+        """Answer to "is it working?": account, chats, uptime, last update from Telegram, leads."""
+        now = now or time.time()
+        total, day = await self.db.lead_counts(int(now))
+        state = "⏸ На паузе (/resume)" if self.paused else "🟢 Работает"
+        started = datetime.fromtimestamp(self.started_at, ZoneInfo(self.tz))
+        if self.last_event_at is None:
+            last = "с момента запуска не было"
+        else:
+            last = f"{_ago(now - self.last_event_at)} назад"
+        lines = [
+            state,
+            f"Читает аккаунт: {escape(await self.account_name())}",
+            f"Групп в мониторинге: {len(self.chat_ids)}" + ("" if self.chat_ids else " — добавьте: /add @username"),
+            f"Запущен: {started:%d.%m %H:%M} ({_ago(now - self.started_at)} назад)",
+            f"Последнее сообщение из Telegram: {last}",
+            f"Заявок: всего {total}, за сутки {day}",
+        ]
+        return "\n".join(lines)
+
     async def remove_chat(self, chat_id: int) -> bool:
         self.chat_ids.discard(chat_id)
         return await self.db.remove_chat(chat_id)
+
+
+def _ago(sec: float) -> str:
+    sec = int(sec)
+    if sec < 60:
+        return f"{sec} с"
+    if sec < 3600:
+        return f"{sec // 60} мин"
+    if sec < 86400:
+        return f"{sec // 3600} ч {sec % 3600 // 60} мин"
+    return f"{sec // 86400} д {sec % 86400 // 3600} ч"

@@ -1,0 +1,27 @@
+# Телеграм-мониторинг заявок под общим пользователем apps (deploy/setup-server.sh).
+# Состояние — команда /status в боте; при каждом запуске бот пишет «Мониторинг запущен».
+[Unit]
+Description=Телеграм-мониторинг заявок (userbot + бот)
+Wants=network-online.target
+After=network-online.target
+# 5 падений за 10 минут — служба «упала», сообщение через notify@ (ставит setup-apps.sh проекта
+# bcs-trading-bot; если его нет, OnFailure просто не сработает). С лимитом по умолчанию (5 за 10 с)
+# при RestartSec=30 он не срабатывает никогда — перезапуски шли бы молча.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+OnFailure=notify@%n.service
+
+[Service]
+User=apps
+Group=apps
+WorkingDirectory=/home/apps/telegram-groups-monitoring-avto
+ExecStart=/home/apps/telegram-groups-monitoring-avto/.venv/bin/python -m app.main
+Restart=on-failure
+RestartSec=30
+# 2 — сессия аккаунта-читателя недействительна (app.main.AUTH_REQUIRED_EXIT): перезапуск не поможет,
+# нужен вход: python -m app.login. Владельцу об этом пишет сам сервис.
+RestartPreventExitStatus=2
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

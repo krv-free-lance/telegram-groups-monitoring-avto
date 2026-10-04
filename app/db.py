@@ -93,6 +93,15 @@ class Database:
         await self.conn.execute("UPDATE leads SET status = ? WHERE id = ?", (status, lead_id))
         await self.conn.commit()
 
+    async def lead_counts(self, now: int | None = None) -> tuple[int, int]:
+        """Total leads and leads in the last 24 hours."""
+        now = now or int(time.time())
+        async with self.conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(created_at > ?), 0) FROM leads", (now - 24 * 3600,)
+        ) as cur:
+            total, day = await cur.fetchone()
+        return total, day
+
     async def stats(self) -> list[tuple[str, int, int, int]]:
         """Per category: total, interesting, not interesting."""
         async with self.conn.execute(
