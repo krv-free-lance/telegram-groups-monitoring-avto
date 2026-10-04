@@ -70,3 +70,45 @@ async def test_live_session_is_silent():
     bot = FakeBot()
     assert await ensure_authorized(FakeClient(authorized=True), bot, owner_id=42)
     assert bot.sent == []
+
+
+class FakeTelethon:
+    """run_until_disconnected blocks until disconnect(), like Telethon."""
+
+    def __init__(self):
+        import asyncio
+        self.stop = asyncio.Event()
+        self.disconnected = False
+
+    async def run_until_disconnected(self):
+        await self.stop.wait()
+
+    async def disconnect(self):
+        self.disconnected = True
+        self.stop.set()
+
+
+async def test_sigterm_stops_userbot_too():
+    """SIGTERM ends aiogram polling; the userbot must be disconnected, not left running."""
+    import asyncio
+    from app.main import run_until_stopped
+
+    client = FakeTelethon()
+
+    async def polling_ended_by_sigterm():
+        return None
+
+    await asyncio.wait_for(run_until_stopped(polling_ended_by_sigterm(), client), timeout=2)
+    assert client.disconnected
+
+
+async def test_userbot_drop_is_an_error():
+    import asyncio
+    from app.main import run_until_stopped
+
+    client = FakeTelethon()
+    client.stop.set()  # dropped on its own
+    polling = asyncio.Event()
+
+    with pytest.raises(RuntimeError):
+        await asyncio.wait_for(run_until_stopped(polling.wait(), client), timeout=2)

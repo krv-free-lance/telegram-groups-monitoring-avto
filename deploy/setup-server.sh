@@ -80,7 +80,14 @@ chmod 440 "/etc/sudoers.d/$U-$SVC"
 visudo -cf "/etc/sudoers.d/$U-$SVC" >/dev/null || { rm -f "/etc/sudoers.d/$U-$SVC"; echo "sudoers не прошёл проверку — удалён"; exit 1; }
 
 step "5. Сессия аккаунта-читателя"
-if as_u "cd $DIR && .venv/bin/python -c '
+if systemctl is-active -q "$SVC"; then
+    # Работающая служба — уже доказательство живой сессии (с мёртвой она выходит с кодом 2).
+    # Проверять параллельно нельзя: вторая копия с тем же файлом сессии получает ошибку,
+    # и проверка принимала её за «сессия недействительна» — и останавливала рабочую службу.
+    systemctl restart "$SVC"
+    sleep 5
+    echo "служба работала — перезапущена с новым кодом: $(systemctl is-active $SVC)"
+elif as_u "cd $DIR && .venv/bin/python -c '
 import asyncio, sys
 from telethon import TelegramClient
 from app.config import Settings

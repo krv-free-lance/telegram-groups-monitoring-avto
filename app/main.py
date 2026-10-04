@@ -27,6 +27,29 @@ async def tell_owner(bot: Bot, owner_id: int, text: str) -> None:
         log.exception("Не удалось написать владельцу")
 
 
+async def run_until_stopped(polling, client) -> None:
+    """Run bot polling and the userbot until either ends, then stop the other.
+
+    aiogram handles SIGTERM by ending start_polling, but Telethon's run_until_disconnected knows
+    nothing about it: with a plain gather the process kept the userbot alive and systemd had to
+    SIGKILL it after TimeoutStopSec. If the userbot drops first, the error is re-raised so the
+    service exits non-zero and systemd restarts it.
+    """
+    bot_task = asyncio.ensure_future(polling)
+    user_task = asyncio.ensure_future(client.run_until_disconnected())
+    done, _ = await asyncio.wait({bot_task, user_task}, return_when=asyncio.FIRST_COMPLETED)
+    if bot_task in done:
+        await client.disconnect()
+        await user_task
+    else:
+        bot_task.cancel()
+        await asyncio.gather(bot_task, return_exceptions=True)
+    for task in done:
+        task.result()  # surface the error, if any
+    if user_task in done and bot_task not in done:
+        raise RuntimeError("userbot отключился от Telegram — служба перезапустится")
+
+
 async def ensure_authorized(client: TelegramClient, bot: Bot, owner_id: int) -> bool:
     """Connect without prompting. client.start() would wait for a phone number on stdin —
     under a service with no terminal that is a silent hang, not an error."""
@@ -80,7 +103,7 @@ async def main() -> None:
     dp = Dispatcher()
     dp.include_router(build_router(db, monitor, settings.owner_id))
     try:
-        await asyncio.gather(dp.start_polling(bot), client.run_until_disconnected())
+        await run_until_stopped(dp.start_polling(bot), client)
     finally:
         await db.close()
         await bot.session.close()
